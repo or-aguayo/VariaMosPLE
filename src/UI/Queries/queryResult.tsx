@@ -99,37 +99,62 @@ export default function QueryResult({
   };
 
   const handleVisualize = () => {
-    //Save the current project state so that we can restore it later
+    // Log para depuración
     console.info("Visualizing solution ", index, " of query result", result);
+
+    const graph = projectService.getGraph();
+
     if (!Array.isArray(result)) {
+      // Visualización de un solo resultado de proyecto
       projectService.updateSelection(
         result as Project,
         projectService.getTreeIdItemSelected()
       );
-      // projectService.updateProject(
-      //   result as Project, projectService.getTreeIdItemSelected()
-      // );
-      // projectService.lookupAndReselectModel();
-      projectService.getGraph().refresh();
+      graph.refresh();
     } else {
-      if (isIterationResult(result)) {
-        handleIterationQueryVisualization();
-      } else {
-        projectService.updateSelection(
-          result[paginationSelection] as Project,
-          projectService.getTreeIdItemSelected()
-        );
-        // projectService.updateProject(
-        //   result as Project, projectService.getTreeIdItemSelected()
-        // );
-        // projectService.lookupAndReselectModel();
-        projectService.getGraph().refresh();
-      }
+      // Si es una lista de resultados (e.g., de iteración)
+      result.forEach((item, idx) => {
+        const element = item[paginationSelection];
+        
+        // Buscar la celda en el grafo usando su ID
+        const cell = graph.getModel().getCell(element.id);
+        
+        if (cell) {
+          console.log(`Updating properties of cell with ID: ${element.id}`);
+
+          // Emisión de propiedades actualizadas en lugar de crear nuevas celdas
+          const properties = element.properties.map((prop: any) => ({
+            name: prop.name,
+            value: prop.value,
+            type: prop.type
+          }));
+
+          projectService.getSocket().emit('propertiesChanged', {
+            clientId: projectService.getClientId(),
+            workspaceId: projectService.getWorkspaceId(),
+            projectId: projectService.getProject().id,
+            productLineId: projectService.getProductLineSelected().id,
+            modelId: projectService.getTreeIdItemSelected(),
+            cellId: cell.value.getAttribute('uid'),
+            properties
+          });
+
+          console.log(`Emitted propertiesChanged for cell ID: ${element.id}`);
+        } else {
+          console.warn(`Cell with ID ${element.id} not found in graph.`);
+        }
+      });
+
+      // Refrescar el grafo después de actualizar las propiedades
+      graph.refresh();
     }
+
+    // Llamada a la función callback de visualización
     if (onVisualize) {
       onVisualize();
     }
   };
+
 
   return (
     <table className="my-2 border border-secondary-subtle rounded-table">
