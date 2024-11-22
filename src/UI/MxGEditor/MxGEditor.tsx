@@ -859,127 +859,164 @@ graph.addListener(mx.mxEvent.CELLS_RESIZED, function (sender, evt) {
       } catch (error) { }
     });
 
-
-
-    graph.addListener(mx.mxEvent.CELLS_MOVED, function (sender, evt) {
+    graph.addListener(mx.mxEvent.CELL_CONNECTED, function (sender, evt) { 
       if (me.isLocalChange) return;
-      if (evt.properties.cells) {
-          for (const c of evt.properties.cells) {
-              if (c.getGeometry().x < 0 || c.getGeometry().y < 0) {
-                  c.getGeometry().x -= evt.properties.dx;
-                  c.getGeometry().y -= evt.properties.dy;
-                  alert("Out of bounds, position reset");
-              }
-          }
-      }
-      evt.consume();
-      if (evt.properties.cells) {
-          let cell = evt.properties.cells[0];
-          if (!cell.value || !cell.value.attributes) {
+      try {
+          evt.consume();
+          let edge = evt.getProperty("edge");
+          let source = edge.source;
+          let target = edge.target;
+  
+          // Debug logs para verificar source y target
+          console.log('Checking source and target for cellConnected event');
+          console.log('Source:', source, 'Target:', target);
+          
+          if (!source) {
+              console.warn("Source is null or undefined. Skipping cellConnected event.");
               return;
           }
-          let uid = cell.value.getAttribute("uid");
-          if (me.currentModel) {
-              for (let i = 0; i < me.currentModel.elements.length; i++) {
-                  const element: any = me.currentModel.elements[i];
-                  if (element.id === uid) {
-                      element.x = cell.geometry.x;
-                      element.y = cell.geometry.y;
-                      element.width = cell.geometry.width;
-                      element.height = cell.geometry.height;
+  
+          if (!target) {
+              console.warn("Target is null or undefined. Skipping cellConnected event.");
+              return;
+          }
+  
+          if (!source.value) {
+              console.warn("Source has no value. Skipping cellConnected event.");
+              return;
+          }
+  
+          if (!target.value) {
+              console.warn("Target has no value. Skipping cellConnected event.");
+              return;
+          }
+  
+          let name = source.value.getAttribute("label") + "_" + target.value.getAttribute("label");
+          let relationshipType = null;
+  
+          let languageDefinition: any = me.props.projectService.getLanguageDefinition("" + me.currentModel.type);
+  
+          // Encontrar tipo de relación basado en source y target
+          if (languageDefinition.abstractSyntax.relationships) {
+              for (let key in languageDefinition.abstractSyntax.relationships) {
+                  const rel = languageDefinition.abstractSyntax.relationships[key];
+                  if (rel.source == source.value.tagName) {
+                      for (let t = 0; t < rel.target.length; t++) {
+                          if (rel.target[t] == target.value.tagName) {
+                              relationshipType = key;
+                              break;
+                          }
+                      }
+                  }
+                  if (relationshipType) {
+                      break;
                   }
               }
           }
-          let cells = evt.properties.cells.map(cell => ({
-              id: cell.value.getAttribute("uid"),
-              x: cell.geometry.x,
-              y: cell.geometry.y,
-              style: cell.getStyle(),
+  
+          if (!edge.value) {
+              const rel = languageDefinition.abstractSyntax.relationships[relationshipType];
+              var doc = mx.mxUtils.createXmlDocument();
+              var node = doc.createElement("relationship");
+              node.setAttribute("label", name);
+              edge.value = node;
+              let points = [];
+              let properties = [];
+              if (rel.properties) {
+                  for (let i = 0; i < rel.properties.length; i++) {
+                      const p = rel.properties[i];
+                      const property = new Property(
+                          p.name, 
+                          p.value, 
+                          p.type, 
+                          p.options, 
+                          p.linked_property, 
+                          p.linked_value, 
+                          false, 
+                          true, 
+                          p.comment, 
+                          p.possibleValues, 
+                          p.possibleValuesLinks, 
+                          p.minCardinality, 
+                          p.maxCardinality, 
+                          p.constraint, 
+                          p.defaultValue
+                      );
+                      if (p.linked_property) {
+                          property.display = false;
+                      }
+                      if (p.possibleValues) {
+                          if (property.possibleValues.includes(",")) {
+                              let options = property.possibleValues.split(",");
+                              if (options.length > 0) {
+                                  property.value = options[0];
+                              }
+                          }
+                      }
+                      properties.push(property);
+                  }
+              }
+  
+              let relationship = me.props.projectService.createRelationship(
+                  me.currentModel,
+                  name,
+                  relationshipType,
+                  source.value.getAttribute("uid"),
+                  target.value.getAttribute("uid"),
+                  points,
+                  rel.min,
+                  rel.max,
+                  properties
+              );
+  
+              node.setAttribute("uid", relationship.id);
+              edge.style = "strokeColor=#446E79;strokeWidth=2;";
+          }
+  
+          // Refrescar etiqueta y estilo del edge
+          me.refreshEdgeLabel(edge);
+          me.refreshEdgeStyle(edge);
+  
+          // Convertir atributos a un array de objetos para emitir
+          let attributes = Array.from(edge.value.attributes) as Attr[];
+          let edgeAttributes = attributes.map(attr => ({
+              name: attr.name,
+              value: attr.value
+          }));
+  
+          console.log('Emitting cellConnected event:', {
+              clientId: me.clientId,
+              sourceId: source.value.getAttribute("uid"),
+              targetId: target.value.getAttribute("uid"),
+              relationshipId: edge.value.getAttribute("uid"),
+              relationshipName: edge.value.getAttribute("label"),
+              style: edge.getStyle(),
+              properties: edgeAttributes,
               projectId: me.props.projectService.getProject().id,
               productLineId: me.props.projectService.getProductLineSelected().id,
               modelId: me.props.projectService.getTreeIdItemSelected()
-          }));
-        me.socket.emit('cellMoved', { clientId: me.clientId, workspaceId: me.workspaceId,  projectId: me.props.projectService.getProject().id,  productLineId: me.props.projectService.getProductLineSelected().id,  modelId: me.props.projectService.getTreeIdItemSelected(), cells });
-      console.log('Emitted cellMoved:', { clientId: me.clientId, workspaceId: me.workspaceId,  projectId: me.props.projectService.getProject().id,  productLineId: me.props.projectService.getProductLineSelected().id,  modelId: me.props.projectService.getTreeIdItemSelected(), cells });
+          });
+  
+          // Emitir el evento a través del socket
+          me.socket.emit('cellConnected', {
+              clientId: me.clientId,
+              workspaceId: me.workspaceId,
+              sourceId: source.value.getAttribute("uid"),
+              targetId: target.value.getAttribute("uid"),
+              relationshipId: edge.value.getAttribute("uid"),
+              relationshipName: edge.value.getAttribute("label"),
+              style: edge.getStyle(),
+              properties: edgeAttributes,
+              projectId: me.props.projectService.getProject().id,
+              productLineId: me.props.projectService.getProductLineSelected().id,
+              modelId: me.props.projectService.getTreeIdItemSelected()
+          });
+  
+      } catch (error) {
+          console.error("Error in cellConnected event handler: ", error);
       }
   });
   
-  graph.addListener(mx.mxEvent.CELLS_ADDED, function (sender, evt) {
-    if (me.isLocalChange) return;
-    try {
-        if (evt.properties.cells) {
-            let parentId = null;
-            if (evt.properties.parent) {
-                if (evt.properties.parent.value) {
-                    parentId = evt.properties.parent.value.getAttribute("uid");
-                }
-            }
-
-            let cells = evt.properties.cells.map(cell => {
-                let properties = [];
-
-                // Verificar si el cell es un elemento o una relación y obtener las propiedades adecuadas
-                if (cell.value && cell.value.attributes) {
-                    const uid = cell.value.getAttribute("uid");
-
-                    // Buscar el elemento o la relación en el modelo
-                    let element = me.props.projectService.findModelElementById(me.currentModel, uid);
-                    if (!element) {
-                        element = me.props.projectService.findModelRelationshipById(me.currentModel, uid);
-                    }
-
-                    // Si se encuentra el elemento o relación, mapear sus propiedades
-                    if (element) {
-                        properties = element.properties.map(prop => ({
-                            name: prop.name,
-                            value: prop.value,
-                            type: prop.type,
-                            // Añadir otros atributos de la propiedad si es necesario
-                        }));
-                    }
-                }
-                console.log(`CELLS_ADDED - Nombre/Label de la celda: ${cell.value.getAttribute("label")}`);
-                return {
-                    id: cell.value.getAttribute("uid"),
-                    type: cell.value.nodeName,
-                    x: cell.geometry.x,
-                    y: cell.geometry.y,
-                    width: cell.geometry.width,
-                    height: cell.geometry.height,
-                    label: cell.value.getAttribute("label"),
-                    style: cell.getStyle(),
-                    projectId: me.props.projectService.getProject().id,
-                    productLineId: me.props.projectService.getProductLineSelected().id,
-                    modelId:me.props.projectService.getTreeIdItemSelected(),
-                    properties // Incluir las propiedades aquí
-                };
-            });
-            me.socket.emit('cellAdded', { clientId: me.clientId, workspaceId: me.workspaceId, projectId: me.props.projectService.getProject().id, productLineId: me.props.projectService.getProductLineSelected().id, modelId: me.props.projectService.getTreeIdItemSelected(), cells });
-            console.log('Emitted cellAdded:', { clientId: me.clientId, workspaceId: me.workspaceId, projectId: me.props.projectService.getProject().id, productLineId: me.props.projectService.getProductLineSelected().id, modelId: me.props.projectService.getTreeIdItemSelected(), cells });
-        }
-    } catch (error) {
-        me.processException(error);
-    }
-});
-  
-graph.addListener(mx.mxEvent.CELLS_RESIZED, function (sender, evt) {
-    if (me.isLocalChange) return;
-    evt.consume();
-
-    if (evt.properties.cells) {
-        let cells = evt.properties.cells.map(cell => ({
-            id: cell.value.getAttribute("uid"),
-            x: cell.geometry.x,
-            y: cell.geometry.y,
-            width: cell.geometry.width,
-            height: cell.geometry.height,
-            style: cell.getStyle()
-        }));
-
-        me.socket.emit('cellResized', { clientId: me.clientId, workspaceId: me.workspaceId, projectId: me.props.projectService.getProject().id, productLineId: me.props.projectService.getProductLineSelected().id, modelId: me.props.projectService.getTreeIdItemSelected(), cells });
-        console.log('Emitted cellResized:', { clientId: me.clientId, workspaceId: me.workspaceId, projectId: me.props.projectService.getProject().id, productLineId: me.props.projectService.getProductLineSelected().id, modelId: me.props.projectService.getTreeIdItemSelected(), cells });
-    }
-});
     // graph.connectionHandler.addListener(mx.mxEvent.CONNECT, function(sender, evt)
     // {
     //   var edge = evt.getProperty('cell');
