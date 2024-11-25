@@ -410,7 +410,11 @@ me.socket.on('cellAdded', (data) => {
 me.socket.on('propertiesChanged', (data) => {
   console.log('Received propertiesChanged:', data);
 
-  if (data.workspaceId === me.workspaceId && data.clientId !== me.clientId && data.modelId === this.props.projectService.getTreeIdItemSelected()) {
+  if (
+    data.workspaceId === me.workspaceId &&
+    data.clientId !== me.clientId &&
+    data.modelId === me.props.projectService.getTreeIdItemSelected()
+  ) {
     me.isLocalChange = true;
 
     // Buscar la celda o conexión (edge) por su ID
@@ -420,76 +424,116 @@ me.socket.on('propertiesChanged', (data) => {
     }
 
     if (cell) {
-      // Actualizar las propiedades del modelo
-      let element = me.props.projectService.findModelElementById(me.currentModel, data.cellId);
+      // Buscar o crear el elemento en el modelo
+      let element =
+        me.props.projectService.findModelElementById(me.currentModel, data.cellId) ||
+        me.props.projectService.findModelRelationshipById(me.currentModel, data.cellId);
+
       if (!element) {
-        element = me.props.projectService.findModelRelationshipById(me.currentModel, data.cellId);
+        console.warn('Elemento no encontrado en el modelo. Creando uno nuevo.');
+
+        // Crear un nuevo elemento o relación basado en los datos disponibles
+        element = {
+          id: data.cellId,
+          name: data.properties.find((prop) => prop.name === 'label')?.value || '',
+          type: data.type,
+          properties: [],
+          sourceId: null, // Para relaciones
+          targetId: null, // Para relaciones
+          points: [], // Para relaciones
+          x: cell.geometry?.x || 0,
+          y: cell.geometry?.y || 0,
+          width: cell.geometry?.width || 50,
+          height: cell.geometry?.height || 50,
+        };
+
+        if (data.type === 'relationship') {
+          me.currentModel.relationships.push(element);
+        } else {
+          me.currentModel.elements.push(element);
+        }
       }
 
-      if (element) {
-        data.properties.forEach(prop => {
-          if (prop.deleted) {
-            // Si la propiedad está marcada como eliminada, removerla
-            element.properties = element.properties.filter(p => p.name !== prop.name);
-            console.log(`propertiesChanged - Property deleted: ${prop.name}`);
+      // Procesar las propiedades recibidas
+      data.properties.forEach((prop) => {
+        if (prop.deleted) {
+          // Eliminar propiedades marcadas como eliminadas
+          element.properties = element.properties.filter((p) => p.name !== prop.name);
+          console.log(`propertiesChanged - Propiedad eliminada: ${prop.name}`);
+        } else {
+          let existingProperty = element.properties.find((p) => p.name === prop.name);
+          if (existingProperty) {
+            existingProperty.value = prop.value; // Actualizar valor
           } else {
-            let property = element.properties.find(p => p.name === prop.name);
+            // Añadir nueva propiedad
+            element.properties.push(
+              new Property(
+                prop.name,
+                prop.value,
+                prop.type,
+                prop.options,
+                prop.linked_property,
+                prop.linked_value,
+                false,
+                prop.display,
+                prop.comment,
+                prop.possibleValues,
+                prop.possibleValuesLinks,
+                prop.minCardinality,
+                prop.maxCardinality,
+                prop.constraint,
+                prop.defaultValue
+              )
+            );
+          }
 
-            // Manejar el cambio de propiedades y el label
-            if (property) {
-              // Si ya existe la propiedad, se actualiza su valor
-              property.value = prop.value;
+          // Actualizar las propiedades en la celda del gráfico
+          cell.value.setAttribute(prop.name, prop.value);
+
+          // Actualizar overlays si es la propiedad 'selected'
+          if (prop.name === 'Selected') {
+            console.log('Updating icon overlay based on selected property');
+            me.createOverlays(element, cell);
+          }
+
+          // Actualizar estilo si la propiedad afecta el estilo
+          if (prop.linked_property) {
+            console.log('Updating style based on linked_property');
+            if (cell.edge) {
+              me.refreshEdgeStyle(cell);
             } else {
-              // Si no existe, se añade la nueva propiedad
-              element.properties.push(new Property(
-                prop.name, prop.value, prop.type, prop.options, 
-                prop.linked_property, prop.linked_value, false, 
-                prop.display, prop.comment, prop.possibleValues, 
-                prop.possibleValuesLinks, prop.minCardinality, 
-                prop.maxCardinality, prop.constraint, prop.defaultValue
-              ));
-            }
-
-            // Actualizar las propiedades también en el gráfico (para celdas y conexiones)
-            cell.value.setAttribute(prop.name, prop.value);
-
-            // Si es la propiedad 'selected', actualizar los overlays del ícono
-            if (prop.name === 'Selected') {
-              console.log('Updating icon overlay based on selected property');
-              me.createOverlays(element, cell); // Actualizar ícono localmente
-            }
-
-            // Si es el nombre o label, mostrar log para depuración
-            if (prop.name === 'label' || prop.name === 'name') {
-              console.log(`propertiesChanged - Label/Name changed: ${prop.name} = ${prop.value}`);
+              me.refreshVertexLabel(cell);
             }
           }
-        });
-
-        // Actualizar el nombre del elemento si se ha cambiado
-        let nameProp = data.properties.find(prop => prop.name === 'name' || prop.name === 'label');
-        if (nameProp) {
-          element.name = nameProp.value;
         }
+      });
 
-        // Eliminar duplicados de la propiedad 'label'
-        element.properties = element.properties.filter((prop, index, self) =>
-          index === self.findIndex((p) => p.name === prop.name) || prop.name === 'label');
-
-        // Refrescar la vista del gráfico
-        if (cell.edge) {
-          me.refreshEdgeLabel(cell);
-        } else {
-          me.refreshVertexLabel(cell);
-        }
-
-        me.graph.refresh();
-
-        // Actualizar el estado si el elemento seleccionado está afectado
-        if (me.state.selectedObject && me.state.selectedObject.id === element.id) {
-          me.setState({ selectedObject: element });
-        }
+      // Actualizar el nombre del elemento si se encuentra una propiedad correspondiente
+      const nameProperty = data.properties.find((prop) => prop.name === 'name' || prop.name === 'label');
+      if (nameProperty) {
+        element.name = nameProperty.value;
       }
+
+      // Eliminar duplicados en propiedades
+      element.properties = element.properties.filter(
+        (prop, index, self) => index === self.findIndex((p) => p.name === prop.name)
+      );
+
+      // Refrescar vista del gráfico
+      if (cell.edge) {
+        me.refreshEdgeLabel(cell);
+      } else {
+        me.refreshVertexLabel(cell);
+      }
+
+      me.graph.refresh();
+
+      // Si el elemento modificado está seleccionado, actualizar el estado
+      if (me.state.selectedObject && me.state.selectedObject.id === element.id) {
+        me.setState({ selectedObject: element });
+      }
+    } else {
+      console.warn('No se encontró la celda en el gráfico.');
     }
 
     me.isLocalChange = false;
