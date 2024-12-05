@@ -580,22 +580,26 @@ this.socket.on('cursorMoved', (data) => {
 
 this.socket.on('edgeStyleChanged', (data) => {
   if (data.workspaceId === me.workspaceId && data.clientId !== me.clientId && data.modelId === this.props.projectService.getTreeIdItemSelected()) {
+    me.isLocalChange = true;
     let edge = MxgraphUtils.findEdgeById(me.graph, data.edgeId, null);
     if (edge) {
       edge.setStyle(data.style);
       me.graph.refresh();
     }
+    me.isLocalChange = false;
   }
 });
 
 me.socket.on('edgeLabelChanged', (data) => {
   if (data.workspaceId === me.workspaceId && data.clientId !== me.clientId && data.modelId === this.props.projectService.getTreeIdItemSelected()) {
+    me.isLocalChange = true;
     let cell = MxgraphUtils.findEdgeById(me.graph, data.cellId, null);
     if (cell) {
       cell.value.setAttribute('label', data.label);
       me.refreshEdgeLabel(cell);
       me.graph.refresh();
     }
+    me.isLocalChange = false;
   }
 });
 
@@ -1169,6 +1173,7 @@ graph.addListener(mx.mxEvent.CELLS_RESIZED, function (sender, evt) {
 }
 
 refreshEdgeStyle(edge: any) {
+  if (this.isLocalChange) return;
   let me = this;
   let languageDefinition: any = me.props.projectService.getLanguageDefinition("" + me.currentModel.type);
   let relationship = me.props.projectService.findModelRelationshipById(me.currentModel, edge.value.getAttribute("uid"));
@@ -1287,6 +1292,7 @@ refreshEdgeStyle(edge: any) {
 }
 
 refreshEdgeLabel(edge: any) {
+  if (this.isLocalChange) return;
   let me = this;
   let languageDefinition: any = me.props.projectService.getLanguageDefinition("" + me.currentModel.type);
 

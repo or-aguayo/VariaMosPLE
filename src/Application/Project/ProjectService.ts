@@ -101,7 +101,7 @@ export default class ProjectService {
   constructor() {
     this.clientId = uuidv4();
     this.workspaceId = uuidv4();  // Genera un workspaceId único para cada usuario
-
+    
     this.socket.on('connect', () => {
       console.log('Connected to collaboration server with ID:', this.clientId, 'Workspace ID:', this.workspaceId);
       this.socket.emit('registerWorkspace', { clientId: this.clientId, workspaceId: this.workspaceId });
@@ -115,6 +115,17 @@ export default class ProjectService {
     // Emitir un evento para que la UI u otros componentes sepan que el proyecto ha sido reemplazado
     this.raiseEventUpdateProject(this._project, null);
   });
+
+  this.socket.on('projectOpened', (data) => {
+    console.log('Received projectOpened event:', data.project);
+
+    // Reemplazar el proyecto actual
+    this.replaceProject(data.project);
+
+    // Emitir evento para notificar a la UI
+    this.raiseEventUpdateProject(this._project, null);
+});
+
   
     // Cliente: Escuchar la creación de Product Line retransmitida por el servidor
     this.socket.on('productLineCreated', (data) => {
@@ -815,27 +826,51 @@ joinWorkspace(workspaceId: string) {
 
     return project;
   }
-
+  
   openProjectInServer(projectId: string, template: boolean): void {
     let me = this;
     let user = this.getUser();
 
+    // Callback en caso de éxito al obtener el proyecto
     let openProjectInServerSuccessCallback = (projectInformation: ProjectInformation) => {
-      me._project = projectInformation.project;
-      me._projectInformation = projectInformation;
-      if (template) {
-        me._projectInformation.id = null;
-        me._projectInformation.template = false;
-      }
-      me.raiseEventUpdateProject(me._project, null);
-    }
+        me._project = projectInformation.project;
+        me._projectInformation = projectInformation;
 
+        if (template) {
+            me._projectInformation.id = null;
+            me._projectInformation.template = false;
+        }
+
+        // Verificar si el proyecto tiene un workspaceId asociado
+        if (!me.workspaceId) {
+            me.workspaceId = uuidv4(); // Generar un nuevo workspaceId si no existe
+            me.socket.emit('registerWorkspace', { clientId: me.clientId, workspaceId: me.workspaceId });
+            console.log(`Assigned new workspaceId: ${me.workspaceId}`);
+        }
+
+        // Emitir el evento al servidor para informar a los demás usuarios
+        me.socket.emit('openProject', {
+            workspaceId: me.workspaceId,
+            projectId: projectId,
+            project: me._project, // También enviamos el proyecto completo
+        });
+        console.log(`Emitted openProject for workspaceId: ${me.workspaceId}`);
+
+        // Notificar a la UI que el proyecto ha sido reemplazado
+        me.raiseEventUpdateProject(me._project, null);
+
+        me.projectCreated = true; // Marcar el proyecto como creado
+        me.raiseProjectCreatedEvent(); // Notificar a la UI
+    };
+
+    // Callback en caso de error al obtener el proyecto
     let openProjectInServerErrorCallback = (e) => {
-      alert(JSON.stringify(e));
-    }
+        alert(JSON.stringify(e));
+    };
 
+    // Llamar al caso de uso para obtener el proyecto desde el servidor
     this.projectPersistenceUseCases.openProject(user, projectId, openProjectInServerSuccessCallback, openProjectInServerErrorCallback);
-  }
+}
 
   saveProjectInServer(projectInformation: ProjectInformation, successCallback: any, errorCallback: any): void {
     let me = this;
