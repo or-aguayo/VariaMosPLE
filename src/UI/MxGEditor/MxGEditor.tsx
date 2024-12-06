@@ -1173,8 +1173,8 @@ graph.addListener(mx.mxEvent.CELLS_RESIZED, function (sender, evt) {
 }
 
 refreshEdgeStyle(edge: any) {
-  if (this.isLocalChange) return;
   let me = this;
+  me.isLocalChange = true; // Marcamos el inicio de un cambio local
   let languageDefinition: any = me.props.projectService.getLanguageDefinition("" + me.currentModel.type);
   let relationship = me.props.projectService.findModelRelationshipById(me.currentModel, edge.value.getAttribute("uid"));
   if (languageDefinition.concreteSyntax.relationships) {
@@ -1289,62 +1289,120 @@ refreshEdgeStyle(edge: any) {
       }
     }
   }
+  me.graph.refresh(); // Refrescar el grafo para asegurar la actualización visual
+  me.isLocalChange = false; // Fin del cambio local
 }
 
 refreshEdgeLabel(edge: any) {
-  if (this.isLocalChange) return;
   let me = this;
+
+  // Obtener el lenguaje definido
   let languageDefinition: any = me.props.projectService.getLanguageDefinition("" + me.currentModel.type);
 
-  // Verificar si edge y value están definidos
+  // Verificar si el edge y su valor existen
   if (!edge || !edge.value) {
-      console.warn("Edge o su valor están indefinidos. No se puede refrescar la etiqueta.");
-      return;
+    console.warn("Edge o su valor están indefinidos. No se puede refrescar la etiqueta.");
+    return;
   }
 
+  // Buscar la relación asociada al edge
   let relationship = me.props.projectService.findModelRelationshipById(me.currentModel, edge.value.getAttribute("uid"));
 
-  // Verificar si el relationship existe
+  // Validaciones adicionales
   if (!relationship) {
-      console.warn(`Relationship con UID ${edge.value.getAttribute("uid")} no encontrado en el modelo actual.`);
-      return;
+    console.warn(`Relationship con UID ${edge.value.getAttribute("uid")} no encontrado en el modelo actual.`);
+    return;
   }
 
-  // Verificar si el relationship tiene un tipo definido
   if (!relationship.type) {
-      console.warn(`El relationship con UID ${edge.value.getAttribute("uid")} no tiene un tipo definido.`);
-      return;
+    console.warn(`El relationship con UID ${edge.value.getAttribute("uid")} no tiene un tipo definido.`);
+    return;
   }
 
+  // Inicializar propiedad de etiqueta
   let label_property = null;
 
+  // Procesar la definición del lenguaje
   if (languageDefinition.concreteSyntax.relationships) {
-      if (languageDefinition.concreteSyntax.relationships[relationship.type]) {
-          if (languageDefinition.concreteSyntax.relationships[relationship.type].label_fixed) {
-              edge.value.setAttribute("label", languageDefinition.concreteSyntax.relationships[relationship.type].label_fixed);
-              me.socket.emit('edgeLabelChanged', { clientId: me.clientId, workspaceId: me.workspaceId, projectId: me.props.projectService.getProject().id, productLineId: me.props.projectService.getProductLineSelected().id, modelId: me.props.projectService.getTreeIdItemSelected(), cellId: edge.value.getAttribute("uid"), label: languageDefinition.concreteSyntax.relationships[relationship.type].label_fixed });
-              return;
-          } else if (languageDefinition.concreteSyntax.relationships[relationship.type].label_property) {
-              label_property = languageDefinition.concreteSyntax.relationships[relationship.type].label_property;
-              for (let p = 0; p < relationship.properties.length; p++) {
-                  const property = relationship.properties[p];
-                  if (property.name == label_property) {
-                      edge.value.setAttribute("label", property.value);
-                      me.socket.emit('edgeLabelChanged', { clientId: me.clientId, workspaceId: me.workspaceId, projectId: me.props.projectService.getProject().id, productLineId: me.props.projectService.getProductLineSelected().id, modelId: me.props.projectService.getTreeIdItemSelected(), cellId: edge.value.getAttribute("uid"), label: property.value });
-                      return;
-                  }
-              }
-          }
+    const relationshipDef = languageDefinition.concreteSyntax.relationships[relationship.type];
+    if (relationshipDef) {
+      // Caso: etiqueta fija
+      if (relationshipDef.label_fixed) {
+        edge.value.setAttribute("label", relationshipDef.label_fixed);
+
+        if (!me.isLocalChange) {
+          me.socket.emit('edgeLabelChanged', {
+            clientId: me.clientId,
+            workspaceId: me.workspaceId,
+            projectId: me.props.projectService.getProject().id,
+            productLineId: me.props.projectService.getProductLineSelected().id,
+            modelId: me.props.projectService.getTreeIdItemSelected(),
+            cellId: edge.value.getAttribute("uid"),
+            label: relationshipDef.label_fixed
+          });
+        }
+        me.graph.refresh(); // Asegura que se reflejen cambios visuales
+        return;
       }
+      // Caso: etiqueta basada en una propiedad
+      else if (relationshipDef.label_property) {
+        label_property = relationshipDef.label_property;
+        for (let p = 0; p < relationship.properties.length; p++) {
+          const property = relationship.properties[p];
+          if (property.name === label_property) {
+            edge.value.setAttribute("label", property.value);
+
+            if (!me.isLocalChange) {
+              me.socket.emit('edgeLabelChanged', {
+                clientId: me.clientId,
+                workspaceId: me.workspaceId,
+                projectId: me.props.projectService.getProject().id,
+                productLineId: me.props.projectService.getProductLineSelected().id,
+                modelId: me.props.projectService.getTreeIdItemSelected(),
+                cellId: edge.value.getAttribute("uid"),
+                label: property.value
+              });
+            }
+            me.graph.refresh(); // Asegura que se reflejen cambios visuales
+            return;
+          }
+        }
+      }
+    }
   }
 
+  // Caso por defecto: usar el nombre de la relación
   if (!label_property) {
-      edge.value.setAttribute("label", relationship.name);
-      me.socket.emit('edgeLabelChanged', { clientId: me.clientId, workspaceId: me.workspaceId, projectId: me.props.projectService.getProject().id, productLineId: me.props.projectService.getProductLineSelected().id, modelId: me.props.projectService.getTreeIdItemSelected(), cellId: edge.value.getAttribute("uid"), label: relationship.name });
+    edge.value.setAttribute("label", relationship.name);
+
+    if (!me.isLocalChange) {
+      me.socket.emit('edgeLabelChanged', {
+        clientId: me.clientId,
+        workspaceId: me.workspaceId,
+        projectId: me.props.projectService.getProject().id,
+        productLineId: me.props.projectService.getProductLineSelected().id,
+        modelId: me.props.projectService.getTreeIdItemSelected(),
+        cellId: edge.value.getAttribute("uid"),
+        label: relationship.name
+      });
+    }
   } else {
-      edge.value.setAttribute("label", "");
-      me.socket.emit('edgeLabelChanged', { clientId: me.clientId, workspaceId: me.workspaceId, projectId: me.props.projectService.getProject().id, productLineId: me.props.projectService.getProductLineSelected().id, modelId: me.props.projectService.getTreeIdItemSelected(),cellId: edge.value.getAttribute("uid"), label: "" });
+    edge.value.setAttribute("label", "");
+
+    if (!me.isLocalChange) {
+      me.socket.emit('edgeLabelChanged', {
+        clientId: me.clientId,
+        workspaceId: me.workspaceId,
+        projectId: me.props.projectService.getProject().id,
+        productLineId: me.props.projectService.getProductLineSelected().id,
+        modelId: me.props.projectService.getTreeIdItemSelected(),
+        cellId: edge.value.getAttribute("uid"),
+        label: ""
+      });
+    }
   }
+
+  me.graph.refresh(); // Refrescar siempre para reflejar cambios visuales
 }
 
 refreshVertexLabel(vertice: any) {
